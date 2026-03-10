@@ -24,10 +24,10 @@ COPY --from=builder /app/dist ./dist
 COPY scripts/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
-# Run as non-root (Claude Code refuses --dangerously-skip-permissions as root)
-RUN useradd -m -s /bin/sh crabby && \
-    mkdir -p /data && \
-    chown -R crabby:crabby /app /data
-USER crabby
+# Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
+# Entrypoint runs as root to fix volume perms, then drops to crabby user
+RUN apt-get update && apt-get install -y gosu && rm -rf /var/lib/apt/lists/* && \
+    useradd -m -s /bin/sh crabby && \
+    chown -R crabby:crabby /app
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
