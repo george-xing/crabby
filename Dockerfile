@@ -24,4 +24,10 @@ COPY --from=builder /app/dist ./dist
 COPY scripts/docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
+# Run as non-root (Claude Code refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/sh crabby && \
+    mkdir -p /data && \
+    chown -R crabby:crabby /app /data
+USER crabby
+
 ENTRYPOINT ["/docker-entrypoint.sh"]
