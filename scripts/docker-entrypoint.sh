@@ -43,8 +43,9 @@ export DBUS_SESSION_BUS_ADDRESS=$(gosu crabby dbus-daemon --session --fork --pri
 eval $(echo '' | gosu crabby gnome-keyring-daemon --unlock --components=secrets 2>/dev/null) || true
 
 # 4. Seed Claude Code OAuth credentials into gnome-keyring
+# Claude Code uses service="Claude Code-credentials" account=<os-username>
 if [ -n "$CLAUDE_OAUTH_CREDENTIALS" ]; then
-  echo -n "$CLAUDE_OAUTH_CREDENTIALS" | gosu crabby secret-tool store --label="Claude Code-credentials" service "Claude Code-credentials" account "Claude Code-credentials" 2>/dev/null || true
+  echo -n "$CLAUDE_OAUTH_CREDENTIALS" | gosu crabby secret-tool store --label="Claude Code-credentials" service "Claude Code-credentials" account "crabby" 2>/dev/null || true
 fi
 
 # 5. Seed gws credentials
