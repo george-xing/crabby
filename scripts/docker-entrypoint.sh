@@ -38,8 +38,11 @@ MCPEOF
 mkdir -p /data/.gws /data/.claude
 chown -R crabby:crabby /data
 
-# 3. Write Claude Code credentials file
-if [ -n "$CLAUDE_OAUTH_CREDENTIALS" ]; then
+# 3. Seed Claude Code credentials (only if not already present on volume)
+# Claude Code auto-refreshes OAuth tokens at runtime and writes them back.
+# Refresh tokens are single-use, so overwriting with the original env var
+# after a refresh would cause 401 errors on the next deploy.
+if [ -n "$CLAUDE_OAUTH_CREDENTIALS" ] && [ ! -f /data/.claude/.credentials.json ]; then
   echo -n "$CLAUDE_OAUTH_CREDENTIALS" > /data/.claude/.credentials.json
   chown crabby:crabby /data/.claude/.credentials.json
 fi
