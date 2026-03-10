@@ -36,6 +36,20 @@ export function initSessionManager() {
     // Column already exists
   }
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      chat_id INTEGER NOT NULL,
+      role TEXT NOT NULL,
+      content TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_chat
+      ON chat_messages(chat_id, id DESC)
+  `);
+
   logger.info("Session manager initialized");
 }
 
@@ -69,4 +83,31 @@ export function getMessageCount(chatId: number): number {
 export function clearSession(chatId: number): void {
   db.prepare("DELETE FROM sessions WHERE chat_id = ?").run(chatId);
   logger.info({ chatId }, "Session cleared");
+}
+
+export function saveMessage(chatId: number, role: "user" | "assistant", content: string): void {
+  db.prepare(
+    "INSERT INTO chat_messages (chat_id, role, content) VALUES (?, ?, ?)",
+  ).run(chatId, role, content);
+}
+
+export function getRecentMessages(chatId: number, limit = 10): Array<{ role: string; content: string }> {
+  const rows = db
+    .prepare(
+      "SELECT role, content FROM chat_messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?",
+    )
+    .all(chatId, limit) as Array<{ role: string; content: string }>;
+  return rows.reverse();
+}
+
+export function pruneMessages(chatId: number, keep = 20): void {
+  if (keep === 0) {
+    db.prepare("DELETE FROM chat_messages WHERE chat_id = ?").run(chatId);
+    return;
+  }
+  db.prepare(
+    `DELETE FROM chat_messages WHERE chat_id = ? AND id NOT IN (
+      SELECT id FROM chat_messages WHERE chat_id = ? ORDER BY id DESC LIMIT ?
+    )`,
+  ).run(chatId, chatId, keep);
 }

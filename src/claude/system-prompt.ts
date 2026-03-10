@@ -1,6 +1,6 @@
 import { getPreferences, listMemories, type MemoryRow } from "../memory/memory.js";
 
-export function buildSystemPrompt(chatId?: number): string {
+export function buildSystemPrompt(chatId?: number, messageCount?: number): string {
   let preferences: MemoryRow[] = [];
   let facts: MemoryRow[] = [];
 
@@ -67,6 +67,11 @@ ${chatId ? `\nCurrent chat_id: ${chatId}` : ""}
     for (const f of facts) {
       prompt += `- ${f.key}: ${f.value}\n`;
     }
+  }
+
+  if (messageCount && messageCount > 40) {
+    prompt += `\n## Session Note
+This conversation has been going for a while. Proactively use the "remember" tool to save any important context, plans, or decisions from this conversation.\n`;
   }
 
   return prompt;
