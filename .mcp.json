@@ -1,0 +1,25 @@
+{
+  "mcpServers": {
+    "crabby-memory": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp/memory-server/index.ts"],
+      "cwd": "/Users/georgexing/Documents/crabby",
+      "env": {
+        "DATA_DIR": "./data"
+      }
+    },
+    "gws": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp/gws-server/index.ts"],
+      "cwd": "/Users/georgexing/Documents/crabby"
+    },
+    "crabby-scheduler": {
+      "command": "npx",
+      "args": ["tsx", "src/mcp/scheduler-server/index.ts"],
+      "cwd": "/Users/georgexing/Documents/crabby",
+      "env": {
+        "DATA_DIR": "./data"
+      }
+    }
+  }
+}
