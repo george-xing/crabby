@@ -5,6 +5,7 @@ import { logger } from "./utils/logger.js";
 import { onShutdown } from "./utils/graceful-shutdown.js";
 import { initSessionManager } from "./claude/session-manager.js";
 import { initMemoryDb } from "./memory/memory.js";
+import { processPool } from "./claude/process-pool.js";
 import { createBot, startBot, stopBot } from "./telegram/bot.js";
 import { initScheduler, stopScheduler } from "./scheduler/scheduler.js";
 
@@ -22,6 +23,7 @@ const bot = createBot();
 initScheduler(bot);
 
 onShutdown(() => {
+  processPool.killAll();
   stopScheduler();
   stopBot(bot);
 });

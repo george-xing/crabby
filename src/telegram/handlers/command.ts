@@ -1,6 +1,7 @@
 import type { Context } from "grammy";
 import { getJobsForChat } from "../../scheduler/persistence.js";
 import { clearSession, pruneMessages } from "../../claude/session-manager.js";
+import { processPool } from "../../claude/process-pool.js";
 
 export async function startCommand(ctx: Context): Promise<void> {
   await ctx.reply(
@@ -23,6 +24,7 @@ export async function newSessionCommand(ctx: Context): Promise<void> {
   const chatId = ctx.chat?.id;
   if (!chatId) return;
 
+  processPool.killProcess(chatId);
   clearSession(chatId);
   pruneMessages(chatId, 0);
   await ctx.reply("Fresh session started. Previous conversation context has been cleared, but my memories are still intact.");

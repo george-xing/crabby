@@ -29,9 +29,14 @@ export function initSessionManager() {
     )
   `);
 
-  // Add message_count column if upgrading from older schema
+  // Add columns if upgrading from older schema
   try {
     db.exec("ALTER TABLE sessions ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0");
+  } catch {
+    // Column already exists
+  }
+  try {
+    db.exec("ALTER TABLE sessions ADD COLUMN resume_failures INTEGER NOT NULL DEFAULT 0");
   } catch {
     // Column already exists
   }
@@ -64,13 +69,27 @@ export function getSessionId(chatId: number): string | null {
 
 export function saveSessionId(chatId: number, sessionId: string) {
   db.prepare(
-    `INSERT INTO sessions (chat_id, session_id, updated_at, message_count)
-     VALUES (?, ?, datetime('now'), 1)
+    `INSERT INTO sessions (chat_id, session_id, updated_at, message_count, resume_failures)
+     VALUES (?, ?, datetime('now'), 1, 0)
      ON CONFLICT(chat_id) DO UPDATE SET
        session_id = ?,
        updated_at = datetime('now'),
-       message_count = CASE WHEN session_id = ? THEN message_count + 1 ELSE 1 END`,
-  ).run(chatId, sessionId, sessionId, sessionId);
+       message_count = CASE WHEN session_id = ? THEN message_count + 1 ELSE 1 END,
+       resume_failures = CASE WHEN session_id = ? THEN resume_failures ELSE 0 END`,
+  ).run(chatId, sessionId, sessionId, sessionId, sessionId);
+}
+
+export function incrementResumeFailures(chatId: number): void {
+  db.prepare(
+    "UPDATE sessions SET resume_failures = resume_failures + 1 WHERE chat_id = ?",
+  ).run(chatId);
+}
+
+export function getResumeFailures(chatId: number): number {
+  const row = db
+    .prepare("SELECT resume_failures FROM sessions WHERE chat_id = ?")
+    .get(chatId) as { resume_failures: number } | undefined;
+  return row?.resume_failures || 0;
 }
 
 export function getMessageCount(chatId: number): number {

@@ -1,6 +1,7 @@
 import type { Api } from "grammy";
 import { spawnClaude } from "../claude/subprocess.js";
-import { getSessionId, saveSessionId, getMessageCount, saveMessage, getRecentMessages, pruneMessages } from "../claude/session-manager.js";
+import { processPool } from "../claude/process-pool.js";
+import { getSessionId, saveSessionId, getMessageCount, saveMessage, getRecentMessages, pruneMessages, getResumeFailures, incrementResumeFailures } from "../claude/session-manager.js";
 import { buildSystemPrompt } from "../claude/system-prompt.js";
 import { TelegramStreamer } from "../claude/streaming.js";
 import { logger } from "../utils/logger.js";
@@ -8,11 +9,36 @@ import { logger } from "../utils/logger.js";
 // Per-chat processing queue to serialize messages within a chat
 const chatQueues = new Map<number, Promise<void>>();
 
+function currentTimePrefix(): string {
+  const now = new Date();
+  const timeStr = now.toLocaleString("en-US", {
+    timeZone: process.env.TIMEZONE || "America/New_York",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `[Current time: ${timeStr}]\n\n`;
+}
+// Track which chats have an in-progress Claude call
+const chatProcessing = new Set<number>();
+
 export async function handleMessage(
   chatId: number,
   text: string,
   api: Api,
 ): Promise<void> {
+  // Notify user if their message is queued behind an in-progress call
+  if (chatProcessing.has(chatId)) {
+    try {
+      await api.sendMessage(chatId, "(Got it, finishing up your previous message first...)");
+    } catch {
+      // ignore
+    }
+  }
+
   // Serialize messages per chat
   const prev = chatQueues.get(chatId) || Promise.resolve();
   const next = prev.then(() => processMessage(chatId, text, api)).catch((err) => {
@@ -22,10 +48,10 @@ export async function handleMessage(
 }
 
 function buildContextPreamble(chatId: number, userPrompt: string): string {
-  const messages = getRecentMessages(chatId, 10);
+  const messages = getRecentMessages(chatId, 30);
   if (messages.length === 0) return userPrompt;
 
-  const MAX_CHARS = 4000;
+  const MAX_CHARS = 8000;
   let budget = MAX_CHARS;
   const selected: Array<{ role: string; content: string }> = [];
 
@@ -53,12 +79,12 @@ async function processMessage(
   text: string,
   api: Api,
 ): Promise<void> {
+  chatProcessing.add(chatId);
   const streamer = new TelegramStreamer(chatId, api);
 
   try {
     await streamer.start();
 
-    const resumeSessionId = getSessionId(chatId);
     const messageCount = getMessageCount(chatId);
     const systemPrompt = buildSystemPrompt(chatId, messageCount);
 
@@ -67,14 +93,18 @@ async function processMessage(
 
     let result = "";
 
+    // Try the long-lived process pool first (eliminates MCP startup overhead)
     try {
-      // Try with session resume first
-      const response = await spawnClaude(
-        {
-          prompt: text,
-          systemPrompt,
-          resumeSessionId: resumeSessionId || undefined,
-        },
+      const isNewProcess = !processPool.hasProcess(chatId);
+      // For new processes, inject context preamble so Claude has conversation history
+      const basePrompt = isNewProcess ? buildContextPreamble(chatId, text) : text;
+      // Prepend current time so Claude always knows the time, even in long-lived sessions
+      const prompt = currentTimePrefix() + basePrompt;
+
+      const response = await processPool.sendMessage(
+        chatId,
+        prompt,
+        systemPrompt,
         (event) => streamer.onEvent(event),
       );
 
@@ -82,51 +112,88 @@ async function processMessage(
         saveSessionId(chatId, response.sessionId);
       }
       result = response.result;
-    } catch (err) {
-      // If resume failed, retry without resume (fresh session)
-      if (resumeSessionId) {
-        logger.warn({ chatId }, "Resume failed, retrying with fresh session");
-        streamer.reset();
+    } catch (poolErr) {
+      // Process pool failed — fall back to one-shot subprocess
+      logger.warn({ err: poolErr, chatId }, "Process pool failed, falling back to one-shot");
+      streamer.reset();
 
-        // Notify user
-        await api.sendMessage(chatId, "(Session refreshed — continuing with recent context)");
-
-        // Inject recent conversation history into the prompt
-        const augmentedPrompt = buildContextPreamble(chatId, text);
-
-        const response = await spawnClaude(
-          {
-            prompt: augmentedPrompt,
-            systemPrompt,
-          },
-          (event) => streamer.onEvent(event),
-        );
-
-        if (response.sessionId) {
-          saveSessionId(chatId, response.sessionId);
-        }
-        result = response.result;
-      } else {
-        throw err;
-      }
+      result = await fallbackOneShot(chatId, text, systemPrompt, messageCount, streamer);
     }
 
     // Record assistant response
     if (result) {
       saveMessage(chatId, "assistant", result);
     }
-    pruneMessages(chatId, 20);
+    pruneMessages(chatId, 50);
   } catch (err) {
     logger.error({ err, chatId }, "Claude subprocess failed");
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    let userMessage = "Sorry, I encountered an error processing your message. Please try again.";
+    if (errorMessage.includes("timed out")) {
+      userMessage = "Sorry, that took too long and timed out. Try a simpler request, or /new to start fresh.";
+    } else if (errorMessage.includes("exited with code")) {
+      userMessage = "Sorry, something went wrong. Try again, or /new to start a fresh session.";
+    }
     try {
-      await api.sendMessage(
-        chatId,
-        "Sorry, I encountered an error processing your message. Please try again.",
-      );
+      await api.sendMessage(chatId, userMessage);
     } catch {
       // ignore send failure
     }
   } finally {
+    chatProcessing.delete(chatId);
     await streamer.finish();
+  }
+}
+
+/** Original one-shot subprocess logic as fallback */
+async function fallbackOneShot(
+  chatId: number,
+  text: string,
+  systemPrompt: string,
+  messageCount: number,
+  streamer: TelegramStreamer,
+): Promise<string> {
+  const resumeSessionId = getSessionId(chatId);
+
+  const shouldRotate = messageCount > 50;
+  const shouldSkipForFailures = getResumeFailures(chatId) >= 2;
+  const skipResume = shouldRotate || shouldSkipForFailures;
+
+  if (skipResume && resumeSessionId) {
+    logger.info({ chatId, messageCount, rotate: shouldRotate, failures: shouldSkipForFailures }, "Skipping session resume");
+  }
+
+  try {
+    if (skipResume) {
+      const augmentedPrompt = buildContextPreamble(chatId, text);
+      const response = await spawnClaude(
+        { prompt: augmentedPrompt, systemPrompt },
+        (event) => streamer.onEvent(event),
+      );
+      if (response.sessionId) saveSessionId(chatId, response.sessionId);
+      return response.result;
+    } else {
+      const response = await spawnClaude(
+        { prompt: text, systemPrompt, resumeSessionId: resumeSessionId || undefined },
+        (event) => streamer.onEvent(event),
+      );
+      if (response.sessionId) saveSessionId(chatId, response.sessionId);
+      return response.result;
+    }
+  } catch (err) {
+    if (resumeSessionId && !skipResume) {
+      logger.warn({ chatId }, "Resume failed, retrying with fresh session");
+      incrementResumeFailures(chatId);
+      streamer.reset();
+
+      const augmentedPrompt = buildContextPreamble(chatId, text);
+      const response = await spawnClaude(
+        { prompt: augmentedPrompt, systemPrompt },
+        (event) => streamer.onEvent(event),
+      );
+      if (response.sessionId) saveSessionId(chatId, response.sessionId);
+      return response.result;
+    }
+    throw err;
   }
 }

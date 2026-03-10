@@ -69,9 +69,9 @@ ${chatId ? `\nCurrent chat_id: ${chatId}` : ""}
     }
   }
 
-  if (messageCount && messageCount > 40) {
+  if (messageCount && messageCount > 45) {
     prompt += `\n## Session Note
-This conversation has been going for a while. Proactively use the "remember" tool to save any important context, plans, or decisions from this conversation.\n`;
+This conversation has been going for a while and will be refreshed soon. Proactively use the "remember" tool to save any important context, plans, or decisions from this conversation before context is lost.\n`;
   }
 
   return prompt;
