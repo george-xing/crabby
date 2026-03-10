@@ -12,10 +12,10 @@ WORKDIR /app
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
 
-# Install build tools (for better-sqlite3), dbus + gnome-keyring (for Claude auth on Linux)
+# Install build tools (for better-sqlite3 native addon)
 COPY package*.json ./
 RUN apt-get update && \
-    apt-get install -y python3 make g++ dbus gnome-keyring libsecret-1-0 libsecret-tools && \
+    apt-get install -y python3 make g++ gosu && \
     npm ci --omit=dev && \
     apt-get purge -y python3 make g++ && apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
@@ -26,8 +26,7 @@ RUN chmod +x /docker-entrypoint.sh
 
 # Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 # Entrypoint runs as root to fix volume perms, then drops to crabby user
-RUN apt-get update && apt-get install -y gosu && rm -rf /var/lib/apt/lists/* && \
-    useradd -m -s /bin/sh crabby && \
+RUN useradd -m -s /bin/sh crabby && \
     chown -R crabby:crabby /app
 
 ENTRYPOINT ["/docker-entrypoint.sh"]

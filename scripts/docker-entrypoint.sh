@@ -38,14 +38,10 @@ MCPEOF
 mkdir -p /data/.gws /data/.claude
 chown -R crabby:crabby /data
 
-# 3. Start dbus and gnome-keyring for Claude Code credential storage (as crabby)
-export DBUS_SESSION_BUS_ADDRESS=$(gosu crabby dbus-daemon --session --fork --print-address)
-eval $(echo '' | gosu crabby gnome-keyring-daemon --unlock --components=secrets 2>/dev/null) || true
-
-# 4. Seed Claude Code OAuth credentials into gnome-keyring
-# Claude Code uses service="Claude Code-credentials" account=<os-username>
+# 3. Write Claude Code credentials file
 if [ -n "$CLAUDE_OAUTH_CREDENTIALS" ]; then
-  echo -n "$CLAUDE_OAUTH_CREDENTIALS" | gosu crabby secret-tool store --label="Claude Code-credentials" service "Claude Code-credentials" account "crabby" 2>/dev/null || true
+  echo -n "$CLAUDE_OAUTH_CREDENTIALS" > /data/.claude/.credentials.json
+  chown crabby:crabby /data/.claude/.credentials.json
 fi
 
 # 5. Seed gws credentials
