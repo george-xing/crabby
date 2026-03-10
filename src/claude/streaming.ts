@@ -16,6 +16,7 @@ export class TelegramStreamer {
   private typingTimer: ReturnType<typeof setInterval> | null = null;
   private finished = false;
   private hasContent = false;
+  private creatingMessage = false;
 
   constructor(chatId: number, api: Api) {
     this.chatId = chatId;
@@ -86,8 +87,10 @@ export class TelegramStreamer {
     if (this.accumulatedText === this.lastEditedText) return;
     if (!this.accumulatedText.trim()) return;
 
-    // Create message on first flush if placeholder hasn't been sent yet
+    // Create message on first flush if it hasn't been sent yet
     if (!this.messageId) {
+      if (this.creatingMessage) return;
+      this.creatingMessage = true;
       try {
         const text = this.truncateForTelegram(this.accumulatedText);
         const msg = await this.api.sendMessage(this.chatId, text);
@@ -95,6 +98,8 @@ export class TelegramStreamer {
         this.lastEditedText = this.accumulatedText;
       } catch (err) {
         logger.warn({ err }, "Failed to send initial streaming message");
+      } finally {
+        this.creatingMessage = false;
       }
       return;
     }
@@ -135,7 +140,8 @@ export class TelegramStreamer {
     // Final flush
     if (this.accumulatedText.trim()) {
       // Ensure we have a message to edit
-      if (!this.messageId) {
+      if (!this.messageId && !this.creatingMessage) {
+        this.creatingMessage = true;
         try {
           const text = this.truncateForTelegram(this.accumulatedText);
           const msg = await this.api.sendMessage(this.chatId, text);
@@ -143,6 +149,8 @@ export class TelegramStreamer {
           this.lastEditedText = this.accumulatedText;
         } catch {
           // ignore
+        } finally {
+          this.creatingMessage = false;
         }
       }
 
