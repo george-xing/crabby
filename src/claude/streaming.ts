@@ -5,7 +5,6 @@ import { logger } from "../utils/logger.js";
 const EDIT_INTERVAL_MS = 300;
 const TELEGRAM_MAX_LENGTH = 4096;
 const TYPING_INTERVAL_MS = 4000;
-const PLACEHOLDER_DELAY_MS = 1500;
 
 export class TelegramStreamer {
   private chatId: number;
@@ -15,7 +14,6 @@ export class TelegramStreamer {
   private lastEditedText = "";
   private editTimer: ReturnType<typeof setInterval> | null = null;
   private typingTimer: ReturnType<typeof setInterval> | null = null;
-  private placeholderTimer: ReturnType<typeof setTimeout> | null = null;
   private finished = false;
   private hasContent = false;
 
@@ -38,15 +36,6 @@ export class TelegramStreamer {
         this.api.sendChatAction(this.chatId, "typing").catch(() => {});
       }
     }, TYPING_INTERVAL_MS);
-
-    // Defer placeholder: only send "..." if no content arrives within 1.5s
-    this.placeholderTimer = setTimeout(async () => {
-      this.placeholderTimer = null;
-      if (!this.messageId && !this.finished) {
-        const msg = await this.api.sendMessage(this.chatId, "...");
-        this.messageId = msg.message_id;
-      }
-    }, PLACEHOLDER_DELAY_MS);
 
     this.editTimer = setInterval(() => {
       this.flush();
@@ -88,11 +77,6 @@ export class TelegramStreamer {
     if (this.typingTimer) {
       clearInterval(this.typingTimer);
       this.typingTimer = null;
-    }
-    // Cancel deferred placeholder if it hasn't fired yet
-    if (this.placeholderTimer) {
-      clearTimeout(this.placeholderTimer);
-      this.placeholderTimer = null;
     }
     // Flush immediately instead of waiting for next interval
     this.flush();
@@ -148,11 +132,6 @@ export class TelegramStreamer {
       clearInterval(this.typingTimer);
       this.typingTimer = null;
     }
-    if (this.placeholderTimer) {
-      clearTimeout(this.placeholderTimer);
-      this.placeholderTimer = null;
-    }
-
     // Final flush
     if (this.accumulatedText.trim()) {
       // Ensure we have a message to edit
