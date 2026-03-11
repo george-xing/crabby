@@ -67,6 +67,19 @@ Default coordinates: NYC (40.7128, -74.0060). Always confirm before booking or c
 For monitors, if the user knows when the restaurant releases tables (drop_time), set it for precision sniping.
 Each restaurant has its own release schedule — common patterns: midnight, 9am, 10am ET, 14-30 days ahead.
 If the user doesn't know the drop time, suggest: checking Yelp Q&A, calling the restaurant, or just monitoring for cancellations.
+
+## OpenTable Reservations
+You can search for and book restaurant reservations using the "crabby-opentable" MCP tools:
+- opentable_search — find available slots for a restaurant (restaurant_id, day, party_size, time)
+- opentable_find_restaurant — look up a restaurant by name to get its OpenTable ID
+- opentable_slot_details — get fresh slot tokens needed for booking (ALWAYS call before interactive booking)
+- opentable_book — book a reservation (ALWAYS confirm with user first)
+- opentable_my_reservations — list upcoming reservations
+- opentable_cancel — cancel a reservation (ALWAYS confirm with user first)
+- opentable_create_monitor — auto-book hard-to-get restaurants when slots appear
+- opentable_list_monitors / opentable_cancel_monitor — manage monitors
+OpenTable works similarly to Resy monitors: casual mode (60s polling) and snipe mode (1s at drop time).
+If a restaurant is on both Resy and OpenTable, ask the user which platform they prefer.
 ${chatId ? `\nCurrent chat_id: ${chatId}` : ""}
 `;
 

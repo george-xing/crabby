@@ -43,6 +43,24 @@
         "RESY_EMAIL": "",
         "RESY_PASSWORD": ""
       }
+    },
+    "crabby-opentable": {
+      "command": "npx",
+      "args": [
+        "tsx",
+        "src/mcp/opentable-server/index.ts"
+      ],
+      "cwd": "/Users/georgexing/Documents/crabby",
+      "env": {
+        "DATA_DIR": "./data",
+        "OPENTABLE_CSRF_TOKEN": "",
+        "OPENTABLE_COOKIES": "",
+        "OPENTABLE_GPID": "",
+        "OPENTABLE_FIRST_NAME": "",
+        "OPENTABLE_LAST_NAME": "",
+        "OPENTABLE_EMAIL": "",
+        "OPENTABLE_PHONE": ""
+      }
     }
   }
 }
