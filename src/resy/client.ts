@@ -45,7 +45,19 @@ export function initResyDb(dataDir: string): void {
   `);
 
   // Load credentials from env vars or credentials file
-  const credsFile = process.env.RESY_CREDENTIALS_FILE;
+  const credsFile =
+    process.env.RESY_CREDENTIALS_FILE ||
+    (() => {
+      // Check default location in data dir
+      const defaultPath = path.join(dataDir, ".resy", "credentials.json");
+      try {
+        readFileSync(defaultPath);
+        return defaultPath;
+      } catch {
+        return null;
+      }
+    })();
+
   if (credsFile) {
     try {
       const creds = JSON.parse(readFileSync(credsFile, "utf-8"));
