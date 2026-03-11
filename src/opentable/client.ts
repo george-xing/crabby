@@ -26,10 +26,12 @@ let lastRequestTime = 0;
 const NORMAL_GAP_MS = 500;
 let snipeMode = false;
 
+// Auth failure notification callback — set by monitor to notify via Telegram
+let authFailureCallback: ((message: string) => Promise<void>) | null = null;
+
 let db: Database.Database;
 let csrfToken: string;
 let cookies: string;
-let gpid: string;
 let firstName: string;
 let lastName: string;
 let email: string;
@@ -45,7 +47,6 @@ export function initOpenTableDb(dataDir: string): void {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       csrf_token TEXT NOT NULL,
       cookies TEXT NOT NULL,
-      gpid TEXT,
       obtained_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
@@ -68,7 +69,6 @@ export function initOpenTableDb(dataDir: string): void {
       const creds = JSON.parse(readFileSync(credsFile, "utf-8"));
       csrfToken = creds.csrf_token;
       cookies = creds.cookies;
-      gpid = creds.gpid || "";
       firstName = creds.first_name || "";
       lastName = creds.last_name || "";
       email = creds.email || "";
@@ -79,7 +79,6 @@ export function initOpenTableDb(dataDir: string): void {
   } else {
     csrfToken = process.env.OPENTABLE_CSRF_TOKEN || "";
     cookies = process.env.OPENTABLE_COOKIES || "";
-    gpid = process.env.OPENTABLE_GPID || "";
     firstName = process.env.OPENTABLE_FIRST_NAME || "";
     lastName = process.env.OPENTABLE_LAST_NAME || "";
     email = process.env.OPENTABLE_EMAIL || "";
@@ -93,7 +92,7 @@ export function initOpenTableDb(dataDir: string): void {
   }
 
   // Cache auth in DB
-  saveAuth(csrfToken, cookies, gpid);
+  saveAuth(csrfToken, cookies);
 }
 
 // --- Auth ---
@@ -101,32 +100,78 @@ export function initOpenTableDb(dataDir: string): void {
 function getCachedAuth(): {
   csrfToken: string;
   cookies: string;
-  gpid: string | null;
+  obtainedAt: string;
 } | null {
   const row = db
-    .prepare("SELECT csrf_token, cookies, gpid FROM opentable_auth WHERE id = 1")
+    .prepare("SELECT csrf_token, cookies, obtained_at FROM opentable_auth WHERE id = 1")
     .get() as
-    | { csrf_token: string; cookies: string; gpid: string | null }
+    | { csrf_token: string; cookies: string; obtained_at: string }
     | undefined;
   if (!row) return null;
   return {
     csrfToken: row.csrf_token,
     cookies: row.cookies,
-    gpid: row.gpid,
+    obtainedAt: row.obtained_at,
   };
 }
 
-function saveAuth(token: string, cookieStr: string, gpidVal: string | null): void {
+function saveAuth(token: string, cookieStr: string): void {
   db.prepare(
-    `INSERT OR REPLACE INTO opentable_auth (id, csrf_token, cookies, gpid, obtained_at)
-     VALUES (1, ?, ?, ?, datetime('now'))`,
-  ).run(token, cookieStr, gpidVal);
+    `INSERT OR REPLACE INTO opentable_auth (id, csrf_token, cookies, obtained_at)
+     VALUES (1, ?, ?, datetime('now'))`,
+  ).run(token, cookieStr);
 }
 
-/** Validate that auth credentials are present. For snipe mode pre-auth. */
+/** Register a callback for auth failure notifications (used by monitor for Telegram alerts). */
+export function onAuthFailure(callback: (message: string) => Promise<void>): void {
+  authFailureCallback = callback;
+}
+
+/**
+ * Validate that auth credentials are present and not stale.
+ * Unlike Resy (which can auto-refresh JWTs), OpenTable CSRF tokens require
+ * manual re-extraction from the browser. This checks token age and warns
+ * if credentials are likely expired.
+ */
 export async function ensureFreshAuth(): Promise<void> {
   if (!csrfToken) {
-    throw new Error("OpenTable CSRF token not configured. Re-extract from browser.");
+    const msg = "OpenTable CSRF token not configured. Re-extract from browser and run scripts/setup-opentable.sh.";
+    if (authFailureCallback) await authFailureCallback(msg);
+    throw new Error(msg);
+  }
+
+  // Check token age — CSRF tokens typically expire within hours
+  const cached = getCachedAuth();
+  if (cached) {
+    const obtainedAt = new Date(cached.obtainedAt);
+    const ageHours = (Date.now() - obtainedAt.getTime()) / (1000 * 60 * 60);
+    if (ageHours > 12) {
+      const msg = `OpenTable credentials are ${Math.round(ageHours)} hours old and may have expired. Re-extract CSRF token and cookies from browser dev tools and update credentials.`;
+      if (authFailureCallback) await authFailureCallback(msg);
+    }
+  }
+
+  // Validate with a lightweight request
+  try {
+    await rateLimit();
+    const res = await fetch(`${BASE_URL}/dapi/fe/gql?optype=query&opname=RestaurantsAvailability`, {
+      method: "POST",
+      headers: buildHeaders(),
+      body: JSON.stringify({
+        operationName: "RestaurantsAvailability",
+        variables: { restaurantIds: [1], date: "2099-01-01", time: "19:00", partySize: 2, databaseRegion: "NA" },
+        extensions: { persistedQuery: { sha256Hash: "e6b87021ed6e865a7778aa39d35d09864c1be29c683c707602dd3de43c854d86" } },
+      }),
+    });
+    lastRequestTime = Date.now();
+    if (res.status === 401 || res.status === 403) {
+      const msg = "OpenTable auth validation failed — CSRF token or cookies have expired. Re-extract from browser dev tools and run scripts/setup-opentable.sh.";
+      if (authFailureCallback) await authFailureCallback(msg);
+      throw new Error(msg);
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("auth validation failed")) throw err;
+    // Network error — don't block snipe, just warn
   }
 }
 
@@ -170,9 +215,12 @@ async function otFetch(
   const res = await fetch(url, { ...options, headers });
 
   if (res.status === 401 || res.status === 403) {
-    throw new Error(
-      `OpenTable auth failed (${res.status}). CSRF token or cookies may have expired. Re-extract from browser and update credentials.`,
-    );
+    const msg = `OpenTable auth failed (${res.status}). CSRF token or cookies have expired. Re-extract from browser dev tools and run scripts/setup-opentable.sh to update credentials.`;
+    // Notify via Telegram if callback is registered
+    if (authFailureCallback) {
+      authFailureCallback(msg).catch(() => {});
+    }
+    throw new Error(msg);
   }
 
   return res;
@@ -238,7 +286,7 @@ export async function findRestaurantByName(
     },
     extensions: {
       persistedQuery: {
-        sha256Hash: "af20f6e65081e1b0a5a00e3fa0e02331db3a5adab8ca22ebad5e0e4a7f3df10c",
+        sha256Hash: "fe1d118abd4c227750693027c2414d43014c2493f64f49bcef5a65274ce9c3c3",
       },
     },
   };
@@ -268,6 +316,78 @@ export async function findRestaurantByName(
     cuisine: first.primaryCuisine ?? first.cuisine,
     priceRange: first.priceRange,
   };
+}
+
+/**
+ * Search for restaurants with availability by location.
+ * Uses OpenTable's REST availability endpoint to discover restaurants
+ * near given coordinates, similar to Resy's lat/long search.
+ */
+export async function searchRestaurantsByLocation(params: {
+  lat: number;
+  long: number;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM
+  partySize: number;
+  query?: string;
+}): Promise<OTRestaurantSearchResult[]> {
+  const searchParams = new URLSearchParams({
+    datetime: `${params.date}T${params.time}`,
+    covers: params.partySize.toString(),
+    latitude: params.lat.toString(),
+    longitude: params.long.toString(),
+    language: "en-US",
+    pageSize: "10",
+  });
+  if (params.query) {
+    searchParams.set("term", params.query);
+  }
+
+  const url = `${BASE_URL}/dapi/fe/gql?optype=query&opname=RestaurantsAvailability`;
+
+  // For location search, use multi-restaurant availability with geo params
+  // Fall back to the autocomplete + individual availability approach
+  const results: OTRestaurantSearchResult[] = [];
+
+  // Step 1: Search for restaurants near the location
+  const searchUrl = `${BASE_URL}/dapi/fe/gql?optype=query&opname=Autocomplete`;
+  const payload = {
+    operationName: "Autocomplete",
+    variables: {
+      term: params.query || "restaurant",
+      latitude: params.lat,
+      longitude: params.long,
+    },
+    extensions: {
+      persistedQuery: {
+        sha256Hash: "fe1d118abd4c227750693027c2414d43014c2493f64f49bcef5a65274ce9c3c3",
+      },
+    },
+  };
+
+  const res = await otFetch(searchUrl, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+  if (!res.ok) return results;
+
+  const data = await res.json();
+  const restaurants = data?.data?.autocomplete?.restaurants;
+  if (!Array.isArray(restaurants)) return results;
+
+  for (const r of restaurants.slice(0, 10)) {
+    results.push({
+      restaurantId: r.restaurantId ?? r.rid ?? r.id,
+      name: r.name,
+      neighborhood: r.neighborhood,
+      locality: r.locality,
+      cuisine: r.primaryCuisine ?? r.cuisine,
+      priceRange: r.priceRange,
+    });
+  }
+
+  return results;
 }
 
 /**
@@ -365,28 +485,12 @@ export async function bookSlot(params: {
 
 /**
  * List upcoming reservations on OpenTable.
- * Uses the GraphQL endpoint to fetch user's reservations.
+ * Uses the REST booking API — the reservations page doesn't use a GraphQL query.
  */
 export async function getMyReservations(): Promise<OTReservation[]> {
-  const url = `${BASE_URL}/dapi/fe/gql?optype=query&opname=PastAndUpcomingReservations`;
+  const url = `${BASE_URL}/dapi/booking/upcoming-reservations`;
 
-  const payload = {
-    operationName: "PastAndUpcomingReservations",
-    variables: {
-      isUpcoming: true,
-      includeCancel: false,
-    },
-    extensions: {
-      persistedQuery: {
-        sha256Hash: "63e53e384d1e50a9b3be3e1e7c102a6e17a8c14e8e37dcab9f4e32c3a7f02a9d",
-      },
-    },
-  };
-
-  const res = await otFetch(url, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  const res = await otFetch(url, { method: "GET" });
 
   if (!res.ok) {
     const text = await res.text();
@@ -394,7 +498,7 @@ export async function getMyReservations(): Promise<OTReservation[]> {
   }
 
   const data = await res.json();
-  const reservations = data?.data?.reservations?.upcoming || data?.data?.reservations || [];
+  const reservations = Array.isArray(data) ? data : (data?.items || data?.reservations || []);
 
   if (!Array.isArray(reservations)) return [];
 
@@ -402,11 +506,11 @@ export async function getMyReservations(): Promise<OTReservation[]> {
     confirmationNumber: (r.confirmationNumber || r.confirmation_number || "") as string,
     reservationId: (r.reservationId || r.id) as number | undefined,
     restaurant: {
-      name: ((r.restaurant as Record<string, unknown>)?.name || "Unknown") as string,
-      id: ((r.restaurant as Record<string, unknown>)?.id || 0) as number,
+      name: ((r.restaurant as Record<string, unknown>)?.name || (r.restaurantName as string) || "Unknown") as string,
+      id: ((r.restaurant as Record<string, unknown>)?.id || (r.restaurantId as number) || 0) as number,
     },
-    dateTime: (r.dateTime || "") as string,
-    partySize: (r.partySize || 0) as number,
+    dateTime: (r.dateTime || r.reservationDateTime || "") as string,
+    partySize: (r.partySize || r.covers || 0) as number,
     status: (r.status || "") as string,
   }));
 }

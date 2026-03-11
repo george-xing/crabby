@@ -19,6 +19,7 @@ import {
   bookSlot,
   ensureFreshAuth,
   setSnipeMode,
+  onAuthFailure,
 } from "./client.js";
 import type { OTSlot } from "./types.js";
 
@@ -48,6 +49,20 @@ export function initOpenTableMonitor(bot: Bot): void {
 
   const dataDir = config.dataDir;
   initOpenTableDb(dataDir);
+
+  // Register auth failure callback to notify all active monitors' chats
+  onAuthFailure(async (message) => {
+    const chatIds = new Set(
+      getActiveMonitors().map((m) => m.chat_id),
+    );
+    for (const chatId of chatIds) {
+      try {
+        await bot.api.sendMessage(chatId, `OpenTable auth issue: ${message}`);
+      } catch {
+        // ignore notification failure
+      }
+    }
+  });
 
   const dbPath = path.join(dataDir, "crabby.db");
   db = new Database(dbPath);

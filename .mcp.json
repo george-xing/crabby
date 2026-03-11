@@ -55,7 +55,6 @@
         "DATA_DIR": "./data",
         "OPENTABLE_CSRF_TOKEN": "",
         "OPENTABLE_COOKIES": "",
-        "OPENTABLE_GPID": "",
         "OPENTABLE_FIRST_NAME": "",
         "OPENTABLE_LAST_NAME": "",
         "OPENTABLE_EMAIL": "",

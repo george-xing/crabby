@@ -12,6 +12,7 @@ import {
   initOpenTableDb,
   searchAvailability,
   findRestaurantByName,
+  searchRestaurantsByLocation,
   getSlotDetails,
   bookSlot,
   getMyReservations,
@@ -168,6 +169,76 @@ server.tool(
         isError: true,
         content: [
           { type: "text" as const, text: `Restaurant search failed: ${err instanceof Error ? err.message : String(err)}` },
+        ],
+      };
+    }
+  },
+);
+
+// --- Tool: opentable_discover ---
+server.tool(
+  "opentable_discover",
+  "Discover restaurants on OpenTable near a location. Use this when the user wants to find restaurants in an area (e.g. 'find me a dinner spot in the West Village'). Returns restaurant names and IDs that can be used with opentable_search.",
+  {
+    lat: z.number().optional().default(40.7128).describe("Latitude (default: NYC)"),
+    long: z.number().optional().default(-74.006).describe("Longitude (default: NYC)"),
+    query: z.string().optional().describe("Optional search term (cuisine, restaurant name, etc.)"),
+    day: z.string().describe("Date in YYYY-MM-DD format"),
+    party_size: z.number().min(1).max(20).describe("Number of guests"),
+    time: z
+      .string()
+      .optional()
+      .default("19:00")
+      .describe("Preferred time (HH:MM)"),
+  },
+  async ({ lat, long, query, day, party_size, time }) => {
+    try {
+      const restaurants = await searchRestaurantsByLocation({
+        lat,
+        long,
+        date: day,
+        time,
+        partySize: party_size,
+        query,
+      });
+
+      if (restaurants.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No restaurants found${query ? ` matching "${query}"` : ""} near that location on OpenTable.`,
+            },
+          ],
+        };
+      }
+
+      const lines = restaurants.map((r) => {
+        const parts = [
+          `${r.name} (ID: ${r.restaurantId})`,
+          r.neighborhood ? `${r.neighborhood}` : "",
+          r.cuisine ? `${r.cuisine}` : "",
+          r.priceRange ? `${"$".repeat(r.priceRange)}` : "",
+        ].filter(Boolean);
+        return parts.join(" | ");
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Found ${restaurants.length} restaurants:\n${lines.join("\n")}\n\nUse opentable_search with a restaurant_id to check availability.`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text" as const,
+            text: `Discovery failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
         ],
       };
     }
