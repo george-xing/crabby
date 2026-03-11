@@ -6,6 +6,10 @@ const EDIT_INTERVAL_MS = 300;
 const TELEGRAM_MAX_LENGTH = 4096;
 const TYPING_INTERVAL_MS = 4000;
 
+// Button markup patterns
+const BUTTON_PATTERN = /\n?\[BUTTONS:\s*([^\]]+)\]\s*$/;
+const PARTIAL_BUTTON_PATTERN = /\n?\[BUTTONS:?[^\]]*$/;
+
 export class TelegramStreamer {
   private chatId: number;
   private messageId: number | null = null;
@@ -87,12 +91,16 @@ export class TelegramStreamer {
     if (this.accumulatedText === this.lastEditedText) return;
     if (!this.accumulatedText.trim()) return;
 
+    // Strip button markup during streaming so users never see raw [BUTTONS: ...]
+    const displayText = this.stripButtonMarkup(this.accumulatedText);
+    if (!displayText.trim()) return;
+
     // Create message on first flush if it hasn't been sent yet
     if (!this.messageId) {
       if (this.creatingMessage) return;
       this.creatingMessage = true;
       try {
-        const text = this.truncateForTelegram(this.accumulatedText);
+        const text = this.truncateForTelegram(displayText);
         const msg = await this.api.sendMessage(this.chatId, text);
         this.messageId = msg.message_id;
         this.lastEditedText = this.accumulatedText;
@@ -104,7 +112,7 @@ export class TelegramStreamer {
       return;
     }
 
-    const text = this.truncateForTelegram(this.accumulatedText);
+    const text = this.truncateForTelegram(displayText);
 
     try {
       await this.api.editMessageText(this.chatId, this.messageId, text, {
@@ -137,13 +145,17 @@ export class TelegramStreamer {
       clearInterval(this.typingTimer);
       this.typingTimer = null;
     }
+
     // Final flush
     if (this.accumulatedText.trim()) {
+      // Parse buttons from final text
+      const { cleanText, buttons } = this.parseButtons(this.accumulatedText);
+
       // Ensure we have a message to edit
       if (!this.messageId && !this.creatingMessage) {
         this.creatingMessage = true;
         try {
-          const text = this.truncateForTelegram(this.accumulatedText);
+          const text = this.truncateForTelegram(cleanText);
           const msg = await this.api.sendMessage(this.chatId, text);
           this.messageId = msg.message_id;
           this.lastEditedText = this.accumulatedText;
@@ -155,19 +167,61 @@ export class TelegramStreamer {
       }
 
       if (this.messageId) {
-        const text = this.truncateForTelegram(this.accumulatedText);
+        const text = this.truncateForTelegram(cleanText);
+        const options: Record<string, unknown> = {};
+
+        // Attach inline keyboard if buttons were found
+        if (buttons && buttons.length > 0) {
+          const keyboardButtons = buttons.map((label) => ({
+            text: label,
+            callback_data: `btn:${label.slice(0, 60)}`, // Telegram 64-byte limit
+          }));
+
+          if (buttons.length <= 3) {
+            options.reply_markup = { inline_keyboard: [keyboardButtons] };
+          } else {
+            options.reply_markup = {
+              inline_keyboard: keyboardButtons.map((b) => [b]),
+            };
+          }
+        }
+
         try {
-          await this.api.editMessageText(this.chatId, this.messageId, text);
+          await this.api.editMessageText(this.chatId, this.messageId, text, options);
         } catch {
           // ignore final edit failures
         }
 
         // If text was truncated, send continuation
-        if (this.accumulatedText.length > TELEGRAM_MAX_LENGTH) {
-          await this.sendContinuations(this.accumulatedText.slice(TELEGRAM_MAX_LENGTH));
+        if (cleanText.length > TELEGRAM_MAX_LENGTH) {
+          await this.sendContinuations(cleanText.slice(TELEGRAM_MAX_LENGTH));
         }
       }
     }
+  }
+
+  private parseButtons(text: string): { cleanText: string; buttons: string[] | null } {
+    const match = text.match(BUTTON_PATTERN);
+    if (!match) return { cleanText: text, buttons: null };
+
+    const labels = match[1]
+      .split("|")
+      .map((l) => l.trim())
+      .filter((l) => l.length > 0)
+      .slice(0, 6);
+
+    if (labels.length === 0) return { cleanText: text, buttons: null };
+
+    const cleanText = text.replace(BUTTON_PATTERN, "").trimEnd();
+    return { cleanText, buttons: labels };
+  }
+
+  private stripButtonMarkup(text: string): string {
+    // Remove complete button markers
+    let cleaned = text.replace(BUTTON_PATTERN, "");
+    // Remove incomplete button markers being typed
+    cleaned = cleaned.replace(PARTIAL_BUTTON_PATTERN, "");
+    return cleaned.trimEnd();
   }
 
   private truncateForTelegram(text: string): string {

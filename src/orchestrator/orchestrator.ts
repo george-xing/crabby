@@ -31,7 +31,9 @@ export async function handleMessage(
   api: Api,
 ): Promise<void> {
   // Notify user if their message is queued behind an in-progress call
-  if (chatProcessing.has(chatId)) {
+  // Skip notification for group chat messages (Claude may be silently processing)
+  const isGroupMessage = text.startsWith("[Group chat");
+  if (chatProcessing.has(chatId) && !isGroupMessage) {
     try {
       await api.sendMessage(chatId, "(Got it, finishing up your previous message first...)");
     } catch {
@@ -118,6 +120,15 @@ async function processMessage(
       streamer.reset();
 
       result = await fallbackOneShot(chatId, text, systemPrompt, messageCount, streamer);
+    }
+
+    // Check if Claude chose to stay silent (group chat behavior)
+    if (result.trim() === "[SKIP]" || result.trim() === "") {
+      saveMessage(chatId, "assistant", "[stayed silent]");
+      pruneMessages(chatId, 50);
+      // Reset streamer so finish() doesn't send [SKIP] to Telegram
+      streamer.reset();
+      return;
     }
 
     // Record assistant response

@@ -19,9 +19,16 @@ export const config = {
       .split(",")
       .map((id) => parseInt(id.trim(), 10))
       .filter((id) => !isNaN(id)),
+    allowedGroupIds: optional("TELEGRAM_ALLOWED_GROUP_IDS", "")
+      .split(",")
+      .map((id) => parseInt(id.trim(), 10))
+      .filter((id) => !isNaN(id)),
   },
   claude: {
     configDir: optional("CLAUDE_CONFIG_DIR", ""),
+  },
+  openai: {
+    apiKey: optional("OPENAI_API_KEY", ""),
   },
   dataDir: optional("DATA_DIR", "./data"),
   timezone: optional("TIMEZONE", "America/New_York"),

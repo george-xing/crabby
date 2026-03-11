@@ -9,20 +9,25 @@ export async function authMiddleware(
   const userId = ctx.from?.id;
   if (!userId) return;
 
+  // Callback queries from whitelisted users (inline keyboard buttons)
+  if (ctx.callbackQuery) {
+    if (config.telegram.allowedUserIds.includes(userId)) {
+      await next();
+    }
+    return;
+  }
+
   const chatType = ctx.chat?.type;
 
-  // Group chats: only respond when bot is mentioned
+  // Group chats: must be whitelisted group + whitelisted user
   if (chatType === "group" || chatType === "supergroup") {
-    const text = ctx.message?.text || "";
-    const botUsername = ctx.me.username;
-    const isMentioned =
-      text.includes(`@${botUsername}`) ||
-      ctx.message?.reply_to_message?.from?.id === ctx.me.id;
+    const groupId = ctx.chat!.id;
+    if (!config.telegram.allowedGroupIds.includes(groupId)) return;
+    if (!config.telegram.allowedUserIds.includes(userId)) return;
 
-    if (!isMentioned) return;
-
-    // Strip the @mention from the message text for cleaner processing
-    if (ctx.message && ctx.message.text) {
+    // Strip @mentions from text for cleaner processing
+    if (ctx.message && "text" in ctx.message && ctx.message.text) {
+      const botUsername = ctx.me.username;
       ctx.message.text = ctx.message.text
         .replace(new RegExp(`@${botUsername}\\s*`, "g"), "")
         .trim();
