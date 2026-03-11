@@ -51,7 +51,7 @@ chown -R crabby:crabby /data
 # Claude Code auto-refreshes OAuth tokens at runtime and writes them back.
 # Refresh tokens are single-use, so overwriting with the original env var
 # after a refresh would cause 401 errors on the next deploy.
-if [ -n "$CLAUDE_OAUTH_CREDENTIALS" ]; then
+if [ -n "$CLAUDE_OAUTH_CREDENTIALS" ] && [ ! -f /data/.claude/.credentials.json ]; then
   echo -n "$CLAUDE_OAUTH_CREDENTIALS" > /data/.claude/.credentials.json
   chown crabby:crabby /data/.claude/.credentials.json
 fi
