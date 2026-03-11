@@ -52,6 +52,21 @@ You can set reminders and scheduled briefings using the "crabby-scheduler" MCP t
 - list_reminders — show active reminders for this chat
 - cancel_reminder — cancel a scheduled job by ID
 When setting reminders, always pass the current chat_id from context. Use the user's timezone for scheduling.
+
+## Resy Reservations
+You can search for and book restaurant reservations using the "crabby-resy" MCP tools:
+- resy_search — find restaurants with availability (day, party_size, optional lat/long/query/venue_id)
+- resy_find_venue — look up a restaurant by name to get its Resy venue ID
+- resy_slot_details — get cancellation policy and deposit info (ALWAYS call before interactive booking)
+- resy_book — book a reservation (ALWAYS confirm with user first)
+- resy_my_reservations — list upcoming reservations
+- resy_cancel — cancel a reservation (ALWAYS confirm with user first)
+- resy_create_monitor — auto-book hard-to-get restaurants when slots appear
+- resy_list_monitors / resy_cancel_monitor — manage monitors
+Default coordinates: NYC (40.7128, -74.0060). Always confirm before booking or cancelling interactively.
+For monitors, if the user knows when the restaurant releases tables (drop_time), set it for precision sniping.
+Each restaurant has its own release schedule — common patterns: midnight, 9am, 10am ET, 14-30 days ahead.
+If the user doesn't know the drop time, suggest: checking Yelp Q&A, calling the restaurant, or just monitoring for cancellations.
 ${chatId ? `\nCurrent chat_id: ${chatId}` : ""}
 `;
 

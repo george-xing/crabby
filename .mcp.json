@@ -2,7 +2,10 @@
   "mcpServers": {
     "crabby-memory": {
       "command": "npx",
-      "args": ["tsx", "src/mcp/memory-server/index.ts"],
+      "args": [
+        "tsx",
+        "src/mcp/memory-server/index.ts"
+      ],
       "cwd": "/Users/georgexing/Documents/crabby",
       "env": {
         "DATA_DIR": "./data"
@@ -10,15 +13,35 @@
     },
     "gws": {
       "command": "npx",
-      "args": ["tsx", "src/mcp/gws-server/index.ts"],
+      "args": [
+        "tsx",
+        "src/mcp/gws-server/index.ts"
+      ],
       "cwd": "/Users/georgexing/Documents/crabby"
     },
     "crabby-scheduler": {
       "command": "npx",
-      "args": ["tsx", "src/mcp/scheduler-server/index.ts"],
+      "args": [
+        "tsx",
+        "src/mcp/scheduler-server/index.ts"
+      ],
       "cwd": "/Users/georgexing/Documents/crabby",
       "env": {
         "DATA_DIR": "./data"
+      }
+    },
+    "crabby-resy": {
+      "command": "npx",
+      "args": [
+        "tsx",
+        "src/mcp/resy-server/index.ts"
+      ],
+      "cwd": "/Users/georgexing/Documents/crabby",
+      "env": {
+        "DATA_DIR": "./data",
+        "RESY_API_KEY": "",
+        "RESY_EMAIL": "",
+        "RESY_PASSWORD": ""
       }
     }
   }

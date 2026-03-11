@@ -8,6 +8,7 @@ import { initMemoryDb } from "./memory/memory.js";
 import { processPool } from "./claude/process-pool.js";
 import { createBot, startBot, stopBot } from "./telegram/bot.js";
 import { initScheduler, stopScheduler } from "./scheduler/scheduler.js";
+import { initResyMonitor, stopResyMonitor } from "./resy/monitor.js";
 
 // Ensure data directory exists
 mkdirSync(config.dataDir, { recursive: true });
@@ -22,9 +23,17 @@ const bot = createBot();
 // Initialize scheduler (reminders, briefings)
 initScheduler(bot);
 
+// Initialize Resy monitor (reservation sniping)
+try {
+  initResyMonitor(bot);
+} catch (err) {
+  logger.warn({ err }, "Resy monitor not initialized (credentials may not be configured)");
+}
+
 onShutdown(() => {
   processPool.killAll();
   stopScheduler();
+  stopResyMonitor();
   stopBot(bot);
 });
 

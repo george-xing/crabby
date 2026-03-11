@@ -29,13 +29,22 @@ cat > /app/.mcp.json << 'MCPEOF'
       "env": {
         "DATA_DIR": "/data"
       }
+    },
+    "crabby-resy": {
+      "command": "node",
+      "args": ["dist/mcp/resy-server/index.js"],
+      "cwd": "/app",
+      "env": {
+        "DATA_DIR": "/data",
+        "RESY_CREDENTIALS_FILE": "/data/.resy/credentials.json"
+      }
     }
   }
 }
 MCPEOF
 
 # 2. Fix volume permissions (entrypoint runs as root, volume mounted as root)
-mkdir -p /data/.gws /data/.claude
+mkdir -p /data/.gws /data/.claude /data/.resy
 chown -R crabby:crabby /data
 
 # 3. Seed Claude Code credentials (only if not already present on volume)
@@ -59,5 +68,11 @@ if [ -n "$GWS_TOKEN_CACHE_B64" ]; then
 fi
 chown -R crabby:crabby /data/.gws
 
-# 6. Start the app as non-root user
+# 6. Seed Resy credentials
+if [ -n "$RESY_CREDENTIALS_B64" ]; then
+  echo "$RESY_CREDENTIALS_B64" | base64 -d > /data/.resy/credentials.json
+  chown crabby:crabby /data/.resy/credentials.json
+fi
+
+# 7. Start the app as non-root user
 exec gosu crabby node dist/index.js
