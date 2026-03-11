@@ -9,6 +9,7 @@ import { processPool } from "./claude/process-pool.js";
 import { createBot, startBot, stopBot } from "./telegram/bot.js";
 import { initScheduler, stopScheduler } from "./scheduler/scheduler.js";
 import { initResyMonitor, stopResyMonitor } from "./resy/monitor.js";
+import { initOpenTableMonitor, stopOpenTableMonitor } from "./opentable/monitor.js";
 
 // Ensure data directory exists
 mkdirSync(config.dataDir, { recursive: true });
@@ -30,10 +31,18 @@ try {
   logger.warn({ err }, "Resy monitor not initialized (credentials may not be configured)");
 }
 
+// Initialize OpenTable monitor (reservation sniping)
+try {
+  initOpenTableMonitor(bot);
+} catch (err) {
+  logger.warn({ err }, "OpenTable monitor not initialized (credentials may not be configured)");
+}
+
 onShutdown(() => {
   processPool.killAll();
   stopScheduler();
   stopResyMonitor();
+  stopOpenTableMonitor();
   stopBot(bot);
 });
 
