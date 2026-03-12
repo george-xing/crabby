@@ -2,6 +2,23 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { config } from "../config.js";
 import { logger } from "../utils/logger.js";
 
+export class AuthenticationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuthenticationError";
+  }
+}
+
+const AUTH_ERROR_PATTERNS = [
+  "authentication_error",
+  "Failed to authenticate",
+  "Invalid authentication credentials",
+];
+
+export function isAuthError(text: string): boolean {
+  return AUTH_ERROR_PATTERNS.some((p) => text.includes(p)) || /\b401\b/.test(text);
+}
+
 export interface ClaudeStreamEvent {
   type: string;
   subtype?: string;
@@ -68,6 +85,7 @@ export function spawnClaude(
     let sessionId: string | null = null;
     let result = "";
     let buffer = "";
+    let stderrOutput = "";
 
     const timeoutMs = options.timeoutMs || 5 * 60 * 1000;
     let lastActivity = Date.now();
@@ -113,6 +131,7 @@ export function spawnClaude(
       lastActivity = Date.now();
       const text = data.toString().trim();
       if (text) {
+        stderrOutput += text + "\n";
         logger.warn({ stderr: text }, "Claude stderr");
       }
     });
@@ -134,8 +153,12 @@ export function spawnClaude(
       }
 
       if (code !== 0) {
-        logger.error({ code }, "Claude exited with non-zero code");
-        reject(new Error(`Claude exited with code ${code}`));
+        logger.error({ code, stderr: stderrOutput }, "Claude exited with non-zero code");
+        if (isAuthError(stderrOutput)) {
+          reject(new AuthenticationError(`Authentication failed: ${stderrOutput.slice(0, 500)}`));
+        } else {
+          reject(new Error(`Claude exited with code ${code}`));
+        }
         return;
       }
 

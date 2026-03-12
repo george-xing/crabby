@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { config } from "../config.js";
 import { logger } from "../utils/logger.js";
-import type { ClaudeStreamEvent } from "./subprocess.js";
+import { AuthenticationError, isAuthError, type ClaudeStreamEvent } from "./subprocess.js";
 
 const PROCESS_TTL_MS = 2 * 60 * 60 * 1000; // 2 hours
 const RESPONSE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes per response
@@ -12,6 +12,7 @@ interface ManagedProcess {
   sessionId: string | null;
   busy: boolean;
   buffer: string;
+  stderrBuffer: string;
 }
 
 class ClaudeProcessPool {
@@ -105,11 +106,13 @@ class ClaudeProcessPool {
       sessionId: null,
       busy: false,
       buffer: "",
+      stderrBuffer: "",
     };
 
     child.stderr?.on("data", (data: Buffer) => {
       const text = data.toString().trim();
       if (text) {
+        managed.stderrBuffer += text + "\n";
         logger.debug({ stderr: text, chatId }, "Claude process stderr");
       }
     });
@@ -186,7 +189,11 @@ class ClaudeProcessPool {
         if (resolved) return;
         cleanup();
         if (code !== 0) {
-          reject(new Error(`Claude exited with code ${code}`));
+          if (isAuthError(proc.stderrBuffer)) {
+            reject(new AuthenticationError(`Authentication failed: ${proc.stderrBuffer.slice(0, 500)}`));
+          } else {
+            reject(new Error(`Claude exited with code ${code}`));
+          }
         } else {
           resolve({ sessionId: proc.sessionId, result });
         }
