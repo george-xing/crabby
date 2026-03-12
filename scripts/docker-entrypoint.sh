@@ -47,13 +47,28 @@ MCPEOF
 mkdir -p /data/.gws /data/.claude /data/.resy
 chown -R crabby:crabby /data
 
-# 3. Seed Claude Code credentials (only if not already present on volume)
-# Claude Code auto-refreshes OAuth tokens at runtime and writes them back.
-# Refresh tokens are single-use, so overwriting with the original env var
-# after a refresh would cause 401 errors on the next deploy.
-if [ -n "$CLAUDE_OAUTH_CREDENTIALS" ] && [ ! -f /data/.claude/.credentials.json ]; then
-  echo -n "$CLAUDE_OAUTH_CREDENTIALS" > /data/.claude/.credentials.json
-  chown crabby:crabby /data/.claude/.credentials.json
+# 3. Seed Claude Code credentials using hash-based change detection.
+# Claude Code auto-refreshes OAuth tokens at runtime (consuming single-use
+# refresh tokens), so we must NOT overwrite when the env var hasn't changed.
+# A sidecar hash file tracks what was last seeded — if the env var changes
+# (user updated it), we overwrite; otherwise we preserve runtime state.
+if [ -n "$CLAUDE_OAUTH_CREDENTIALS" ]; then
+  CURRENT_HASH=$(printf '%s' "$CLAUDE_OAUTH_CREDENTIALS" | sha256sum | cut -d' ' -f1)
+  STORED_HASH=""
+  if [ -f /data/.claude/.credentials.seeded_hash ]; then
+    STORED_HASH=$(cat /data/.claude/.credentials.seeded_hash)
+  fi
+
+  if [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
+    printf '%s' "$CLAUDE_OAUTH_CREDENTIALS" > /data/.claude/.credentials.json
+    printf '%s' "$CURRENT_HASH" > /data/.claude/.credentials.seeded_hash
+    chown crabby:crabby /data/.claude/.credentials.json /data/.claude/.credentials.seeded_hash
+    echo "[entrypoint] Seeded Claude credentials from env var (new or updated)"
+  else
+    echo "[entrypoint] Claude credentials unchanged, preserving runtime state"
+  fi
+elif [ ! -f /data/.claude/.credentials.json ]; then
+  echo "[entrypoint] WARNING: No Claude credentials found. Set CLAUDE_OAUTH_CREDENTIALS env var and redeploy."
 fi
 
 # 5. Seed gws credentials
