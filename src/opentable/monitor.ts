@@ -21,7 +21,7 @@ import {
   setSnipeMode,
   onAuthFailure,
 } from "./client.js";
-import type { OTSlot } from "./types.js";
+import { slotTime, type OTSlot } from "./types.js";
 
 let db: Database.Database;
 let botInstance: Bot;
@@ -182,9 +182,9 @@ async function checkMonitor(monitor: MonitorRow): Promise<void> {
       if (!availability) continue;
 
       for (const availDay of availability.availabilityDays || []) {
-        const matchingSlots = filterSlots(availDay.slots, monitor.time_start, monitor.time_end);
+        const matchingSlots = filterSlots(availDay.slots, searchTime, monitor.time_start, monitor.time_end);
         if (matchingSlots.length > 0) {
-          const booked = await tryBookSlot(matchingSlots, day, monitor);
+          const booked = await tryBookSlot(matchingSlots, searchTime, day, monitor);
           if (booked) return;
         }
       }
@@ -322,11 +322,12 @@ async function executeSnipe(monitor: MonitorRow, targetDate: string): Promise<vo
           for (const availDay of availability.availabilityDays || []) {
             const matchingSlots = filterSlots(
               availDay.slots,
+              searchTime,
               monitor.time_start,
               monitor.time_end,
             );
             if (matchingSlots.length > 0) {
-              const booked = await tryBookSlot(matchingSlots, targetDate, monitor);
+              const booked = await tryBookSlot(matchingSlots, searchTime, targetDate, monitor);
               if (booked) {
                 setSnipeMode(false);
                 return;
@@ -360,6 +361,7 @@ async function executeSnipe(monitor: MonitorRow, targetDate: string): Promise<vo
 
 async function tryBookSlot(
   slots: OTSlot[],
+  searchTime: string,
   day: string,
   monitor: MonitorRow,
 ): Promise<boolean> {
@@ -367,15 +369,14 @@ async function tryBookSlot(
     if (!slot.slotAvailabilityToken || !slot.slotHash) continue;
 
     try {
-      // Extract time from slot dateTime (e.g. "2026-03-15T19:00")
-      const slotTime = slot.dateTime?.split("T")[1]?.slice(0, 5) || monitor.time_start;
+      const actualTime = slotTime(searchTime, slot.timeOffsetMinutes);
 
       const confirmation = await bookSlot({
         restaurantId: monitor.restaurant_id!,
         slotAvailabilityToken: slot.slotAvailabilityToken,
         slotHash: slot.slotHash,
         date: day,
-        time: slotTime,
+        time: actualTime,
         partySize: monitor.party_size,
       });
 
@@ -387,7 +388,7 @@ async function tryBookSlot(
       // Notify user
       const message = [
         `Booked! ${monitor.restaurant_name} (OpenTable)`,
-        `${day} at ${slotTime}, ${monitor.party_size} guests`,
+        `${day} at ${actualTime}, ${monitor.party_size} guests`,
         `Confirmation: ${confirmation.confirmationNumber}`,
         confirmation.reservationId
           ? `Reservation ID: ${confirmation.reservationId}`
@@ -405,7 +406,7 @@ async function tryBookSlot(
       }
 
       logger.info(
-        { monitorId: monitor.id, restaurant: monitor.restaurant_name, day, slotTime },
+        { monitorId: monitor.id, restaurant: monitor.restaurant_name, day, actualTime },
         "Auto-booked OpenTable reservation",
       );
       return true;
@@ -484,17 +485,15 @@ function getSnipeDates(monitor: MonitorRow): string[] {
 
 function filterSlots(
   slots: OTSlot[],
+  searchTime: string,
   timeStart: string,
   timeEnd: string,
 ): OTSlot[] {
   return slots.filter((s) => {
     if (!s.isAvailable) return false;
 
-    // Extract HH:MM from dateTime like "2026-03-15T19:00"
-    const timePart = s.dateTime?.split("T")[1]?.slice(0, 5);
-    if (!timePart) return false;
-
-    return timePart >= timeStart && timePart < timeEnd;
+    const actualTime = slotTime(searchTime, s.timeOffsetMinutes);
+    return actualTime >= timeStart && actualTime < timeEnd;
   });
 }
 

@@ -18,7 +18,7 @@ import {
   getMyReservations,
   cancelReservation,
 } from "../../opentable/client.js";
-import type { OTSlot } from "../../opentable/types.js";
+import { slotTime, type OTSlot } from "../../opentable/types.js";
 
 const DATA_DIR = process.env.DATA_DIR || "./data";
 
@@ -98,15 +98,20 @@ server.tool(
 
         // Filter by time window
         if (time_start || time_end) {
-          slots = filterSlotsByTime(slots, time_start, time_end);
+          slots = filterSlotsByTime(slots, time, time_start, time_end);
         }
 
         if (slots.length === 0) continue;
 
-        lines.push(`Date: ${availDay.date || day}`);
+        // Compute actual date from dayOffset
+        const baseDate = new Date(day + "T00:00:00");
+        baseDate.setDate(baseDate.getDate() + (availDay.dayOffset || 0));
+        const dateStr = baseDate.toISOString().slice(0, 10);
+
+        lines.push(`Date: ${dateStr}`);
         const slotLines = slots.slice(0, 10).map((s) => {
-          const slotTime = s.dateTime?.split("T")[1]?.slice(0, 5) || "??:??";
-          return `  ${slotTime} [token: ${s.slotAvailabilityToken?.slice(0, 20)}..., hash: ${s.slotHash}]`;
+          const actualTime = slotTime(time, s.timeOffsetMinutes);
+          return `  ${actualTime} [token: ${s.slotAvailabilityToken}, hash: ${s.slotHash}]`;
         });
         lines.push(...slotLines);
         if (slots.length > 10) {
@@ -268,9 +273,9 @@ server.tool(
       }
 
       const slot = details.slot;
-      const slotTime = slot.dateTime?.split("T")[1]?.slice(0, 5) || time;
+      const actualTime = slotTime(time, slot.timeOffsetMinutes);
       const lines = [
-        `Slot: ${slotTime} on ${day}`,
+        `Slot: ${actualTime} on ${day}`,
         `Availability token: ${slot.slotAvailabilityToken}`,
         `Slot hash: ${slot.slotHash}`,
         `Cancellation: ${details.cancellationPolicy || "Standard policy"}`,
@@ -556,17 +561,17 @@ server.tool(
 
 function filterSlotsByTime(
   slots: OTSlot[],
+  searchTime: string,
   timeStart?: string,
   timeEnd?: string,
 ): OTSlot[] {
   if (!timeStart && !timeEnd) return slots;
 
   return slots.filter((s) => {
-    const timePart = s.dateTime?.split("T")[1]?.slice(0, 5);
-    if (!timePart) return false;
+    const actualTime = slotTime(searchTime, s.timeOffsetMinutes);
 
-    if (timeStart && timePart < timeStart) return false;
-    if (timeEnd && timePart >= timeEnd) return false;
+    if (timeStart && actualTime < timeStart) return false;
+    if (timeEnd && actualTime >= timeEnd) return false;
     return true;
   });
 }

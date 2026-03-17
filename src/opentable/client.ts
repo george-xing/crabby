@@ -9,12 +9,13 @@
 import Database from "better-sqlite3";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import type {
-  OTSearchResponse,
-  OTBookingConfirmation,
-  OTReservation,
-  OTRestaurantSearchResult,
-  OTSlot,
+import {
+  slotTime,
+  type OTSearchResponse,
+  type OTBookingConfirmation,
+  type OTReservation,
+  type OTRestaurantSearchResult,
+  type OTSlot,
 } from "./types.js";
 
 const BASE_URL = "https://www.opentable.com";
@@ -160,7 +161,7 @@ export async function ensureFreshAuth(): Promise<void> {
       body: JSON.stringify({
         operationName: "RestaurantsAvailability",
         variables: { restaurantIds: [1], date: "2099-01-01", time: "19:00", partySize: 2, databaseRegion: "NA" },
-        extensions: { persistedQuery: { sha256Hash: "e6b87021ed6e865a7778aa39d35d09864c1be29c683c707602dd3de43c854d86" } },
+        extensions: { persistedQuery: { sha256Hash: "b2d05a06151b3cb21d9dfce4f021303eeba288fac347068b29c1cb66badc46af" } },
       }),
     });
     lastRequestTime = Date.now();
@@ -181,7 +182,7 @@ export function setSnipeMode(enabled: boolean): void {
 
 // --- HTTP helpers ---
 
-function buildHeaders(): Record<string, string> {
+function buildHeaders(includeCookies = false): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Origin: BASE_URL,
@@ -190,10 +191,14 @@ function buildHeaders(): Record<string, string> {
     Accept: "application/json",
     "x-csrf-token": csrfToken,
   };
-  if (cookies) {
+  if (includeCookies && cookies) {
     headers["Cookie"] = cookies;
   }
   return headers;
+}
+
+function buildHeadersWithCookies(): Record<string, string> {
+  return buildHeaders(true);
 }
 
 async function rateLimit(): Promise<void> {
@@ -209,9 +214,10 @@ async function rateLimit(): Promise<void> {
 async function otFetch(
   url: string,
   options: RequestInit = {},
+  withCookies = false,
 ): Promise<Response> {
   await rateLimit();
-  const headers = { ...buildHeaders(), ...(options.headers as Record<string, string>) };
+  const headers = { ...buildHeaders(withCookies), ...(options.headers as Record<string, string>) };
   const res = await fetch(url, { ...options, headers });
 
   if (res.status === 401 || res.status === 403) {
@@ -251,7 +257,7 @@ export async function searchAvailability(params: {
     },
     extensions: {
       persistedQuery: {
-        sha256Hash: "e6b87021ed6e865a7778aa39d35d09864c1be29c683c707602dd3de43c854d86",
+        sha256Hash: "b2d05a06151b3cb21d9dfce4f021303eeba288fac347068b29c1cb66badc46af",
       },
     },
   };
@@ -303,18 +309,22 @@ export async function findRestaurantByName(
 
   const data = await res.json();
 
-  // Response structure: data.autocomplete.restaurants[0]
-  const restaurants = data?.data?.autocomplete?.restaurants;
-  if (!restaurants || restaurants.length === 0) return null;
+  // Response structure: data.autocomplete.autocompleteResults[]
+  const results = data?.data?.autocomplete?.autocompleteResults;
+  if (!results || results.length === 0) return null;
+
+  // Filter to restaurant type only
+  const restaurants = results.filter((r: Record<string, unknown>) => r.type === "Restaurant");
+  if (restaurants.length === 0) return null;
 
   const first = restaurants[0];
   return {
-    restaurantId: first.restaurantId ?? first.rid ?? first.id,
+    restaurantId: parseInt(first.id, 10),
     name: first.name,
-    neighborhood: first.neighborhood,
-    locality: first.locality,
-    cuisine: first.primaryCuisine ?? first.cuisine,
-    priceRange: first.priceRange,
+    neighborhood: first.neighborhoodName,
+    locality: first.macroName,
+    cuisine: first.primaryCuisine ?? undefined,
+    priceRange: first.priceRange ?? undefined,
   };
 }
 
@@ -373,17 +383,18 @@ export async function searchRestaurantsByLocation(params: {
   if (!res.ok) return results;
 
   const data = await res.json();
-  const restaurants = data?.data?.autocomplete?.restaurants;
-  if (!Array.isArray(restaurants)) return results;
+  const allResults = data?.data?.autocomplete?.autocompleteResults;
+  if (!Array.isArray(allResults)) return results;
 
+  const restaurants = allResults.filter((r: Record<string, unknown>) => r.type === "Restaurant");
   for (const r of restaurants.slice(0, 10)) {
     results.push({
-      restaurantId: r.restaurantId ?? r.rid ?? r.id,
+      restaurantId: parseInt(r.id, 10),
       name: r.name,
-      neighborhood: r.neighborhood,
-      locality: r.locality,
-      cuisine: r.primaryCuisine ?? r.cuisine,
-      priceRange: r.priceRange,
+      neighborhood: r.neighborhoodName,
+      locality: r.macroName,
+      cuisine: r.primaryCuisine ?? undefined,
+      priceRange: r.priceRange ?? undefined,
     });
   }
 
@@ -465,7 +476,7 @@ export async function bookSlot(params: {
   const res = await otFetch(url, {
     method: "POST",
     body: JSON.stringify(payload),
-  });
+  }, true);
 
   if (!res.ok) {
     const text = await res.text();
@@ -490,7 +501,7 @@ export async function bookSlot(params: {
 export async function getMyReservations(): Promise<OTReservation[]> {
   const url = `${BASE_URL}/dapi/booking/upcoming-reservations`;
 
-  const res = await otFetch(url, { method: "GET" });
+  const res = await otFetch(url, { method: "GET" }, true);
 
   if (!res.ok) {
     const text = await res.text();
@@ -528,7 +539,7 @@ export async function cancelReservation(confirmationNumber: string): Promise<voi
   const res = await otFetch(url, {
     method: "POST",
     body: JSON.stringify(payload),
-  });
+  }, true);
 
   if (!res.ok) {
     const text = await res.text();
